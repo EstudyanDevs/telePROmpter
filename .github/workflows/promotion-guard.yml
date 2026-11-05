@@ -1,0 +1,31 @@
+name: Promotion guard
+
+on:
+  pull_request:
+    branches: [staging, main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  promotion-source:
+    name: Allowed promotion source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Accept only dev -> staging and staging -> main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo '::error::Promotion PRs must come from this repository.'
+            exit 1
+          fi
+          case "${BASE_REF}:${HEAD_REF}" in
+            staging:dev | main:staging) echo 'Allowed promotion.' ;;
+            *) echo '::error::Only dev -> staging and staging -> main are allowed.'; exit 1 ;;
+          esac

@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, staging, main]
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [dev, staging, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Tests, lint and builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            apps/api/pnpm-lock.yaml
+            apps/web/pnpm-lock.yaml
+      - run: pnpm --dir apps/api install --frozen-lockfile
+      - run: pnpm --dir apps/web install --frozen-lockfile
+      - name: Validate CI helpers
+        run: node --test .github/scripts/*.test.mjs
+      - name: Detect database tests
+        id: database
+        run: |
+          if find apps/api/tests/integration/database -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) | grep -q .; then
+            node -e 'const p = require("./apps/api/package.json"); if (!p.scripts["db:migrate:test"]) throw new Error("Database tests require db:migrate:test")'
+            echo 'required=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'required=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create throwaway Neon database
+        id: neon
+        if: steps.database.outputs.required == 'true'
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          NEON_CI_PARENT_ID: ${{ vars.NEON_CI_PARENT_ID }}
+        run: node .github/scripts/neon-ci-database.mjs create
+      - name: Migrate test database
+        if: steps.database.outputs.required == 'true'
+        run: pnpm --dir apps/api db:migrate:test
+      - run: pnpm --dir apps/api lint
+      - run: pnpm --dir apps/web lint
+      - run: pnpm --dir apps/api typecheck
+      - run: pnpm --dir apps/web typecheck
+      - run: pnpm --dir apps/api test
+      - run: pnpm --dir apps/web test
+      - run: pnpm --dir apps/api build
+      - run: pnpm --dir apps/web build
+      - name: Check browser environment boundaries
+        run: node .github/scripts/check-browser-env.mjs
+      - name: Read Playwright version
+        id: playwright
+        working-directory: apps/web
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: browser-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: pnpm --dir apps/web exec playwright install --with-deps chromium
+      - if: steps.browser-cache.outputs.cache-hit == 'true'
+        run: pnpm --dir apps/web exec playwright install-deps chromium
+      - run: pnpm --dir apps/web test:e2e
+      - name: Delete throwaway Neon branch
+        if: always() && steps.neon.outputs.branch_id != ''
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          NEON_CI_PARENT_ID: ${{ vars.NEON_CI_PARENT_ID }}
+          NEON_BRANCH_ID: ${{ steps.neon.outputs.branch_id }}
+        run: node .github/scripts/neon-ci-database.mjs delete
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

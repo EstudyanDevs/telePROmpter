@@ -1,0 +1,75 @@
+name: Release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Release target (select the matching branch above)
+        type: choice
+        options: [staging, production]
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build verified release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Require the environment's protected branch
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          BRANCH: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          test "$REF_TYPE" = branch
+          case "${TARGET_ENVIRONMENT}:${BRANCH}" in
+            staging:staging | production:main) echo 'Release branch accepted.' ;;
+            *) echo '::error::Staging requires staging; production requires main.'; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            apps/api/pnpm-lock.yaml
+            apps/web/pnpm-lock.yaml
+      - run: pnpm --dir apps/api install --frozen-lockfile
+      - run: pnpm --dir apps/web install --frozen-lockfile
+      - name: Require completed CI for this revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          gh run list --workflow ci.yml --commit "$RELEASE_SHA" --event push --limit 1 --json conclusion --jq '.[0].conclusion == "success"' | grep -qx true
+      - run: pnpm --dir apps/api build
+      - run: pnpm --dir apps/web build
+      - run: node .github/scripts/check-browser-env.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ inputs.environment }}-${{ github.sha }}
+          path: apps/web/dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-${{ inputs.environment }}-${{ github.sha }}
+          path: |
+            apps/api/dist/
+            apps/api/package.json
+            apps/api/pnpm-lock.yaml
+            apps/api/pnpm-workspace.yaml
+          if-no-files-found: error

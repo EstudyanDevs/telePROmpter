@@ -5,9 +5,14 @@ script editing, prompting, recording, settings, and synchronization.
 
 ## Directory map
 
-This tree defines where code belongs as the app grows. Create optional folders
-when implementing their responsibility; the tree does not imply that every
-folder or feature is already implemented.
+This tree is a suggested reference, not a fixed or required file structure.
+The placement examples below are suggestions too. Adapt names, nesting and
+module boundaries to the feature's needs and the existing code. Inspect the
+repository for its actual structure; this map includes possible future folders.
+Create, move or rename files only when the implementation needs it, rather than
+to make the repository match this tree. Keep responsibilities clear as the
+structure evolves. Data boundaries, test behavior and branching rules elsewhere
+in this guide still apply independently of folder layout.
 
 ```text
 telePROmpter/
@@ -66,14 +71,16 @@ telePROmpter/
 ├── .github/
 │   ├── workflows/
 │   │   ├── ci.yml                # Install, tests, lint, typecheck, builds, E2E
-│   │   └── promotion-guard.yml   # Validate dev -> staging -> main promotions
+│   │   ├── promotion-guard.yml   # Validate dev -> staging -> main promotions
+│   │   ├── release-artifacts.yml # Manual builds for staging and production
+│   │   └── neon-cleanup.yml      # Remove stale throwaway CI branches
 │   └── scripts/                 # CI resource setup and cleanup when needed
 ├── docs/                         # Architecture and project documentation
 ├── AGENTS.md
 └── README.md
 ```
 
-## Frontend placement
+## Suggested frontend placement
 
 - Keep route files focused on navigation, route data loading and composing feature views.
 - Keep providers and application wiring in `app/`.
@@ -90,7 +97,7 @@ telePROmpter/
 - Put frontend tests in `apps/web/tests/`, mirroring the owning source area.
   Use the testing layout below instead of introducing a second test convention.
 
-## API placement
+## Suggested API placement
 
 - Keep `index.ts` responsible for the server process and `app.ts` responsible for
   composing the Hono application.
@@ -139,10 +146,12 @@ Before adding tests, configuring test tools, editing GitHub Actions, or changing
 release automation, read [Testing and CI/CD](docs/testing-and-ci.md). It defines
 suite separation, test isolation, TelePROmpter scenarios and promotion rules.
 
-The test tooling, workflows and release process in this guide are the intended
-conventions. They are not installed or configured by this documentation change.
-Check actual scripts, workflows and repository settings before reporting a check
-or deployment as available or passing.
+Vitest, Playwright and ESLint are configured in both apps, with browser tests
+owned by the web app. GitHub workflows implement CI, promotion checks, manual
+release artifacts and conditional Neon provisioning. Browser feature tests and
+database migrations remain feature work. GitHub secrets, branch protection and
+remote branches require repository setup; publishing artifacts does not deploy
+the application. Check actual run results before reporting CI as passing.
 
 ## Branching and promotion PRs
 

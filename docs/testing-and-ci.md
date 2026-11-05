@@ -2,12 +2,15 @@
 
 These conventions adapt SIC-APP's Vitest projects, reusable fakes, isolated
 integration tests, Playwright smoke tests and guarded branch promotions to
-TelePROmpter. This is a target design; test tooling, GitHub Actions, branch
-protection and hosting must be configured separately.
+TelePROmpter. Test tools and GitHub workflows are scaffolded. Branch protection,
+Neon configuration and remote branch setup are external repository settings.
+Releases currently publish build artifacts; hosting is not configured.
 
 ## Test layout
 
-Create these folders and configuration files when implementing their tests.
+This layout is a suggested reference. Adapt folder names and nesting to the
+existing code and test runner configuration; create folders only as tests need
+them. Preserve suite separation and isolation regardless of the chosen paths.
 
 ```text
 apps/
@@ -65,8 +68,8 @@ Vitest discovery.
 ## Throwaway Neon database
 
 Use a new Neon branch for each CI run attempt, following SIC-APP's lifecycle.
-Implement creation and deletion in `.github/scripts/neon-ci-database.sh` when
-adding the database-backed workflow. Neon supports isolated branches and
+Creation, deletion and stale cleanup are implemented in
+`.github/scripts/neon-ci-database.mjs`. Neon supports isolated branches and
 per-branch database creation through its API:
 [branch API](https://api-docs.neon.tech/reference/createprojectbranch),
 [database API](https://api-docs.neon.tech/reference/createprojectbranchdatabase).
@@ -101,6 +104,61 @@ per-branch database creation through its API:
 CI must fail when database integration tests are required but provisioning or
 configuration is missing. Do not turn that failure into a silently skipped suite.
 Database-free unit tests need no Neon branch.
+
+The workflow detects database tests in `apps/api/tests/integration/database/`.
+That folder is currently a placeholder, so CI does not provision Neon yet.
+When implementing persistence, add a real `db:migrate:test` script in the API
+package that uses `MIGRATE_DATABASE_URL`; detection fails if that script is
+missing. Configure `NEON_API_KEY` as an Actions secret and `NEON_PROJECT_ID`
+and `NEON_CI_PARENT_ID` as Actions variables. The parent must be a dedicated
+synthetic CI branch owned by this repository. Missing credentials cause required
+database checks to fail. Fork PRs with database tests need a trusted maintainer
+workflow; secrets are not exposed to untrusted pull-request code.
+
+For local database tests, explicitly set a disposable `TEST_DATABASE_URL` whose
+database is named `ci`. CI additionally validates that its host and branch
+metadata match the provisioning outputs. No production URL is used as fallback.
+
+## Current commands
+
+From either `apps/api` or `apps/web`:
+
+```bash
+pnpm test
+pnpm test:unit
+pnpm test:watch
+pnpm lint
+pnpm typecheck
+pnpm build
+```
+
+`pnpm test:integration` selects just that app's integration project. The API
+contains a real HTTP integration test. The web integration folder is empty;
+selecting that project alone fails with no tests until a feature supplies one.
+The normal web test run executes its existing unit suite without pretending
+that browser storage or sync integration is covered.
+
+For browser tests, build both apps, then run from `apps/web`:
+
+```bash
+pnpm exec playwright install chromium
+pnpm test:e2e
+```
+
+Playwright starts the web dev server locally and the production preview server
+when `CI=true`. It starts the compiled API in both cases. Ports 4173 and 4174
+must be free. Current smoke coverage checks the app renders without page errors
+and the compiled API serves its health endpoint; PWA behavior is future coverage.
+
+From the repository root, validate CI helpers with:
+
+```bash
+node --test .github/scripts/*.test.mjs
+node .github/scripts/check-browser-env.mjs
+```
+
+The environment check detects static references to known server variables in
+browser source. It is a focused guard, not a complete secret scanner.
 
 ## TelePROmpter coverage
 
@@ -173,3 +231,25 @@ through environment variables rather than interpolating them into shell code.
 - Keep deployment steps and migration commands in runbooks as infrastructure is
   implemented. Neon CI isolation is the chosen database testing convention;
   SIC-APP's Next.js, Prisma and hosting setup do not prescribe this app's stack.
+
+## GitHub setup and release artifacts
+
+- Publish `dev`, `staging` and `main` to the remote when pushing is authorized.
+  Make `dev` the routine PR base in repository settings.
+- Require the `Tests, lint and builds` check on each protected branch and
+  `Allowed promotion source` on `staging` and `main`. Require PRs and disable
+  direct pushes and bypasses according to repository policy.
+- CI runs for PRs into all three branches and pushes to those branches. It
+  installs with frozen app-local lockfiles and validates the merge result on
+  promotion PRs. Shared packages currently have no executable code or scripts;
+  add their checks when those packages are implemented.
+- Run **Release artifacts** manually from `staging` for staging or `main` for
+  production. It requires the latest push CI run for the exact commit to have
+  passed, then builds and uploads both apps. API artifacts include the lockfile
+  and package metadata; install production dependencies before starting them.
+- Artifact publishing does not upload to a host, deploy the API, apply remote
+  migrations or create a GitHub Release. Provider deployment can be attached
+  after hosting is selected.
+- The stale Neon cleanup schedule runs from GitHub's default branch. It is
+  inactive without the Neon project and CI parent variables. Ensure that the
+  default branch contains the workflow when enabling database CI.

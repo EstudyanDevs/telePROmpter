@@ -17,6 +17,11 @@ pnpm dev
 Use `pnpm build` to type-check and build for production, `pnpm typecheck` to
 check types, and `pnpm preview` to serve the production build locally.
 
+Both apps provide `pnpm test`, `pnpm lint` and `pnpm typecheck`. For browser
+tests, build both apps, then run `pnpm exec playwright install chromium` and
+`pnpm test:e2e` from `apps/web`. See [Testing and CI/CD](docs/testing-and-ci.md)
+for suite layout, Neon setup, promotion checks and release artifacts.
+
 For the API, run commands from `apps/api`:
 
 ```bash
